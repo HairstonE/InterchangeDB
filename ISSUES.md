@@ -1,124 +1,43 @@
 # Quality Tracker
 
-Anchored to commit `0aaff20` (May 24, 2026 — Phase 11 SQL surface landing).
-
-This document is the single source of truth for open quality items in
-InterchangeDB. It supersedes `ISSUES.md` — narrow code defects (formerly
-`ISS-NNN`) and broader quality investments now share one numbering
-surface (`Q-NN`) here. Resolved items are intentionally omitted; closed
+The single source of truth for open quality items in InterchangeDB. Items
+carry `Q-NN` numbers (the older `ISS-NNN` scheme was folded into this
+one). Resolved items are intentionally omitted from the tables. Closed
 items live only in the audit history at the bottom.
 
----
-
-## Plan-vs-code drift findings
-
-The May 24 audit identified five checkboxes in `plan.md` that overstate
-the actual state of the code. These are corrected here; `plan.md` should
-be updated to match.
-
-| Plan claim                                                                              | Actual state                                                                                                                                  | Action                                                                                    |
-| --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Task 8.3: "Policy swap under load" `[x]`                                                | No such test exists. `tests/concurrency_stress_test.rs` has 5 tests, none swap a policy. `policy_swaps` counter exists; stress test does not. | Mark `[ ]`; tracked as Q-01.                                                              |
-| Task 6.5: Hermitage tests (G0/G1a/G1b/G1c/G2-item/G2) `[x]`                             | Zero hits for "hermitage" or any G-anomaly name across the codebase.                                                                          | Mark `[ ]`; tracked as Q-24.                                                              |
-| Task 8.6: "shuttle dev-dep" `[x]`                                                       | `shuttle` not in `Cargo.toml`. Manual-barrier substitute shipped in `tests/deterministic_test.rs` with documented rationale.                  | Re-phrase plan checkbox to acknowledge the substitute, or adopt shuttle. Tracked as Q-25. |
-| Task 8.5: "B-Tree / LSM / Transaction proptest" `[x]`                                   | Partial. MVCC encoding, BTreeEngine put-get, GC, and txn lifecycle covered. LSM and lock manager have zero proptest coverage.                 | Mark `[~]` partial; tracked as Q-08.                                                      |
-| Phase 11 frontloaded: `tests/common/mock_catalog.rs`, `mock_stats.rs`, `golden_plan.rs` | `tests/common/` does not exist as of `0aaff20`.                                                                                               | Phase 11 scaffolding obligation; tracked as Q-02.                                         |
-
-The meta-issue (plan-as-aspiration vs. plan-as-record) is tracked as
-Q-23: a checkbox audit pass against the entire plan.
+The tracker opened with the May 24, 2026 audit (commit `0aaff20`), which
+found 22 items — five of them `plan.md` checkboxes that overstated the
+code. All were closed except the meta-item below. The lesson stands:
+checkboxes drift silently between intent and record.
 
 ---
 
 ## Open quality items
 
 Severity: Critical / High / Medium / Low.
-Effort: S (hours), M (1–2 days), L (several days), XL (week+).
+Effort: S (hours), M (1-2 days), L (several days), XL (week+).
 
-### Phase 11 — blockers for the current phase
+| #    | Item                                                                                                                                                      | Sev  | Effort | Status |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ------ | ------ |
+| Q-23 | Plan-vs-code checkbox audit. Walk every `[x]` in `plan.md`, verify against code, downgrade overstated ones. Cost: hours. Value: removes credibility risk. | High | M      | Open   |
 
-| #    | Item                                                                                                                                                                                                                                                                  | Sev      | Effort | Status |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------ | ------ |
-| Q-23 | Plan-vs-code checkbox audit. Walk every `[x]` in `plan.md`, verify against code, downgrade overstated ones. Cost: hours. Value: removes credibility risk.                                                                                                             | High     | M      | Open   |
-
-### Open correctness defects
-
-| #    | Item                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Sev    | Effort | Status |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ | ------ | ------ |
-| Q-35 | **BPM eviction/swap data race — Q-30 recurrence (3rd interleaving). FIXED 2026-07-01 via shuttle.** The missing model dimension was a THIRD concurrent evictor: `three_writer_storm_scenario` found two deterministic schedules in <1 s. Root cause is a CLASS — evictability writes derived from pin-count reads taken outside the replacer lock (unpin deferred set, eviction-abandon), racing each other; plus 5/6 policies accepted `set_evictable(true)` for untracked frames (LRU scored phantoms as PREFERRED victims). Fixes: abandon path re-tracks + restores; all evictability writes read pin count INSIDE the replacer lock; `evictable ⊆ tracked` contract enforced in all six policies + documented in the trait. See audit-history `2026-07-01`. | Critical | M | Fixed |
-
-### Foundation gaps (cost rises with delay)
-
-| #    | Item                                                                                                                                                                                                                                                                                                                                                                                                     | Sev    | Effort                  | Status |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ----------------------- | ------ |
-
-### Phase 11 binder / planner coverage
-
-| #    | Item                                                                                                                                                                                                                  | Sev    | Effort | Status |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ------ | ------ |
-
-### Lower-priority hygiene
-
-| #    | Item                                                                                                                                                                                                                                                                                                                                                   | Sev | Effort      | Status |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --- | ----------- | ------ |
-
----
-
-## Items deferred to future phases
-
-These are quality investments the plan correctly places in future phases.
-Listed here so they don't accidentally get re-tracked as current gaps.
-
-| Item                                                               | Owning phase                             |
-| ------------------------------------------------------------------ | ---------------------------------------- |
-| Cost model calibration (predicted vs actual I/O per operator)      | Phase 14 — Selinger + stats + CostModel  |
-| Statistics correctness (ANALYZE on known distributions)            | Phase 14                                 |
-| Planner-comparison harness (interchange-thesis empirical evidence) | Phase 18 — Cascades + comparison harness |
-| TPC-C harness, tpmC measurement                                    | Phase 16                                 |
-| TPC-H readiness (SQL surface, external spill, harness, SF1)        | Phase 20                                 |
-| Vectorized `ExecutionModel` (third impl)                           | Open-Ended (post-Phase 22)               |
-| Shuttle/loom deterministic interleaving exploration                | Open-Ended (requires parking_lot → std::sync refactor) |
-| `cargo-fuzz` / libFuzzer target for parser+binder                  | Open-Ended (Q-22 partially closed via proptest extension; full fuzz requires nightly Rust) |
-| ClickBench harness                                                 | Open-Ended                               |
-| Q21 full decorrelation                                             | Open-Ended                               |
-
----
-
-## Suggested ordering
-
-Cheap items first to lock in current state, then high-impact correctness
-work, then larger refactors.
-
-1. **Q-23** plan checkbox audit (hours, no risk)
-2. **Q-21** `render_explain` nested fix (hours)
-3. **Q-02** Phase 11 scaffolding (highest leverage for current and future planner phases)
-4. **Q-11** EXPLAIN goldens (depends on Q-02; lock down before Phase 14)
-5. **Q-04** LSM atomic flush (real defect, small fix)
-6. **Q-05** B+Tree iterator bounds check (small)
-7. **Q-06 → Q-07** DiskManager refactor + fault injection
-8. **Q-01** Hot-swap stress (full coverage benefits from fault-injection from Q-07; needed before Phase 16)
-9. **Q-24** Hermitage SI suite (closes a plan-overstated correctness item)
-10. **Q-19 → Q-20** Binder + planner property tests
-11. **Q-08** proptest breadth to LSM + lock manager
-12. **Q-09** Cross-engine differential test
-13. **Q-25** Shuttle adoption or plan correction
-14. **Q-15** Docstring back-fill (ongoing alongside other work)
-15. **Q-22, Q-16, Q-17** remaining low-priority items
+Future-work candidates are not tracked here until adopted. They live
+with their subject: swappable-seam extractions in
+[`docs/seams.md`](docs/seams.md), testing extensions in
+[`docs/stability.md`](docs/stability.md), and TPC-H levers in
+[`docs/plan-tpch.md`](docs/plan-tpch.md).
 
 ---
 
 ## How to use this document
 
-- New quality concerns get the next free `Q-NN` number. Preserve
-  numbering even when items close — historical references should always
+- A new quality concern gets the next free `Q-NN` number. Preserve
+  numbering when items close — historical references must always
   resolve.
-- When closing an item, move it out of the table and append a one-line
-  entry to the audit history at the bottom with the closing commit.
-- At each phase transition, re-verify the "Plan-vs-code drift" section
-  against the actual code state. The lesson of the May 24 audit is that
-  checkboxes drift silently between intent and reality.
-- This file supersedes `ISSUES.md`; the old `ISS-NNN` IDs are referenced
-  parenthetically inside the relevant `Q-NN` rows for historical
-  traceability.
+- When you close an item, move it out of the table and append a one-line
+  entry to the audit history at the bottom, with the closing commit.
+- The old `ISS-NNN` IDs are referenced parenthetically inside the
+  relevant `Q-NN` rows for historical traceability.
 
 ---
 

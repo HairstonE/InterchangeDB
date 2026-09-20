@@ -1,176 +1,187 @@
-# Interchangeable Seams
+# Interchangeable seams
 
-The trait map for InterchangeDB. Each trait is a *seam* — a point where one
-implementation can be swapped for another that satisfies the same contract.
-This is the living index of what's interchangeable and what each seam should
-have behind it.
-
-**Guiding principle:** a trait with one implementation is a hypothesis, not a
-proven seam. Every trait here targets **≥2 real implementations**; until it
-has them, the abstraction is unvalidated.
+This is the trait map for InterchangeDB. Each trait is a *seam* — a point
+where one implementation can be swapped for another that satisfies the same
+contract. This file is the living index of what is interchangeable, and of
+what each seam has behind it.
 
 Legend: `(built)` exists in code · `(planned)` designed, not yet built ·
-`(stretch)` aspirational / research.
+`(stretch)` aspirational or research.
 
 Validation status at a glance:
-- Validated (2+ impls): `DiskManager`, `EvictionPolicy`, `StorageEngine`,
-  `Optimizer` (RuleBased + Selinger, runtime-swappable via the `Planner` enum),
-  `StatsProvider` (Catalog + Mock)
-- Hypothesis (1 impl, needs a second): `ConcurrencyControl`, `CommitProtocol`,
-  `CostModel` (DefaultCostModel only)
-- Not yet a trait (extract it): `ExecutionModel`, `QueryEngine`, `SecondaryIndex`
+
+- **Validated (2+ impls):** `DiskManager`, `EvictionPolicy`,
+  `StorageEngine`, `PlannerStrategy`, `ExecutionModel`, `StatsProvider`,
+  `IsolationPolicy`, `CostModel` (one production impl, three test models).
+- **Hypothesis (1 impl, needs a second):** `DataLayout` (`RowLayout` only).
+- **Not yet a trait (extract it):** `CommitProtocol`, full
+  `ConcurrencyControl` (beyond isolation), `QueryEngine`.
 
 ---
 
 ## 1. Disk I/O — `DiskManager`
 
-Raw page read/write/allocate/sync. The lowest seam; the one that makes
-deterministic simulation testing possible.
+Raw page read, write, allocate, and sync. The lowest seam, and the one
+that makes deterministic simulation testing possible.
 
-- **FileDiskManager** (built) — single-file, real `fsync` per write.
-- **MemoryDiskManager** (built) — in-RAM page array; tests and simulation.
-- **FaultInjectionDiskManager** (built) — torn writes, dropped/reordered
-  flushes, crash-at-LSN; the engine behind crash-recovery torture tests.
-- **IoUringDiskManager** (planned) — Linux `io_uring`, real async + batched
-  submission; the principled "async storage" win, kept behind this seam.
-- **DirectIoDiskManager** (stretch) — `O_DIRECT`, bypass the OS page cache for
-  predictable I/O accounting.
+- **FileDiskManager** (built) — single file, real `fsync` per write.
+- **MemoryDiskManager** (built) — in-RAM page array, for tests and
+  simulation.
+- **FaultInjectionDiskManager** (built, in `testkit/src/faults.rs`) — wraps
+  another `DiskManager` and injects read/write/allocate errors and torn
+  node-page writes. It drives the crash-recovery torture tests.
+- **IoUringDiskManager** (planned) — Linux `io_uring`, real async with
+  batched submission, kept behind this seam.
+- **DirectIoDiskManager** (stretch) — `O_DIRECT`, bypass the OS page cache
+  for predictable I/O accounting.
 
 ## 2. Buffer pool — `EvictionPolicy`
 
-Chooses which frame to evict. The marquee *runtime*-swappable seam, with warm
-state transfer on swap.
+Chooses which frame to evict. The marquee *runtime*-swappable seam, with
+warm state transfer on swap.
 
-- **FIFO** (built) — evict oldest-loaded; baseline.
+- **FIFO** (built) — evict the oldest-loaded frame. The baseline.
 - **CLOCK** (built) — second-chance approximation of LRU.
-- **LRU** (built) — least-recently-used.
-- **LRU-K** (built) — evict by backward K-distance; scan-resistant.
-- **2Q** (built) — A1in/A1out/Am queues; scan-resistant.
+- **LRU** (built) — least recently used.
+- **LRU-K** (built) — evict by backward K-distance. Scan-resistant.
+- **2Q** (built) — A1in/A1out/Am queues. Scan-resistant.
 - **ARC** (built) — adaptive balance of recency and frequency.
-- **Random / MRU** (stretch) — degenerate baselines for the comparison paper.
-- **LIRS** (stretch) — low inter-reference recency set; another research point.
-
-> Note: the **pull-based refactor** (lever #1) changes this trait's *shape* —
-> the hot path bumps a lock-free per-frame atomic, and each policy *reads*
-> per-frame state at eviction time. All six impls above migrate to the new
-> contract; that migration is the work, and it's what keeps the seam *and*
-> removes the latch.
+- **Random / MRU** (stretch) — degenerate baselines for comparison work.
+- **LIRS** (stretch) — low inter-reference recency set.
 
 ## 3. Storage engine — `StorageEngine`
 
-Key/value get/put/delete/scan. Compile-time swap (generic `E: StorageEngine`).
+Key/value get, put, delete, and scan. Compile-time swap (generic
+`E: StorageEngine`).
 
-- **BTreeEngine** (built) — B+Tree over the buffer pool; read-optimized.
-- **LsmEngine** (built) — LSM-tree; write-optimized, bypasses the buffer pool.
-- **InMemoryEngine** (planned) — skiplist/hashmap, no pages, no buffer pool;
-  the first rung of the "approach in-memory SOTA" ladder.
+- **BTreeEngine** (built) — B+Tree over the buffer pool. Read-optimized.
+- **LsmEngine** (built) — LSM-tree. Write-optimized, bypasses the buffer
+  pool.
+- **InMemoryEngine** (planned) — skiplist or hashmap, no pages, no buffer
+  pool. The first rung of the in-memory speed ladder.
 - **FractalTreeEngine / Bε-tree** (stretch) — buffered, write-optimized
-  B-tree; the novel-structure swap point.
+  B-tree.
+- **ProllyTreeEngine** (stretch) — content-addressed, history-independent
+  B-tree. Sequenced after the Fractal Tree.
 
-## 4. Secondary indexing — `SecondaryIndex`
+## 4. Secondary indexing — `IndexBackend`
 
-Non-primary-key access paths. Currently coupled to the catalog's
-`IndexBackend`; extract into its own seam.
+Non-primary-key access paths. Not a trait: an enum in `idb-core`
+(`common/ids.rs`) that names which engine backs an index.
 
-- **BTreeIndex** (built, as `IndexBackend::BTree`) — ordered secondary index.
-- **HashIndex** (planned) — point-lookup-only, no range support.
-- **LsmIndex** (stretch) — write-optimized secondary index.
+- **BTree** (built) — ordered secondary index.
+- **Lsm** (built) — LSM-backed secondary index.
+- **Hash** (planned) — point-lookup only, no range support.
 
-## 5. Concurrency control — `ConcurrencyControl`
+Secondary indexes are unversioned. Reads recheck MVCC visibility. The
+versioned-index design is [`plan-versioned-indexes.md`](plan-versioned-indexes.md).
 
-How transactions detect conflicts and provide an isolation level. **Not yet a
-trait** — currently hard-wired MVCC. Extract it; this is the seam that makes
-the isolation-level and OLTP-speed experiments possible.
+## 5. Isolation — `IsolationPolicy`
 
-- **MVCC + Snapshot Isolation** (built) — current; write skew permitted by
-  design.
-- **SSI** (planned) — MVCC + rw-antidependency cycle detection; the one
-  feature that closes the gap to full serializability.
-- **2PL** (planned) — lock-based serializability; the comparison baseline.
-- **OCC** (planned) — Silo-style optimistic; avoids shared writes on reads,
-  the high-core-count scaling play.
-- **PartitionedSerial** (stretch) — H-Store style, one thread per partition,
-  no in-partition concurrency control; the TPC-C-by-warehouse play.
+How a transaction's snapshot admits or blocks anomalies. Extracted as a
+trait in `idb-txn` (`txn/isolation/`). The Hermitage anomaly scenarios run
+per level through testkit's `for_each_isolation!` matrix.
+
+- **SnapshotIsolation** (built, default) — write skew permitted by design.
+- **ReadCommitted** (built) — the comparison level. Admits
+  non-repeatable-read and lost-update where SI blocks them.
+- **SSI** (planned) — rw-antidependency cycle detection. Closes the gap to
+  full serializability.
+
+A broader `ConcurrencyControl` seam (replace MVCC itself with OCC,
+lock-only 2PL, or H-Store-style partitioned serial execution) is **not yet
+a trait** — MVCC is hard-wired.
 
 ## 6. Commit / durability — `CommitProtocol`
 
-How durability is achieved at commit time. Currently fused into the WAL;
-extract the policy.
+How durability is achieved at commit time. **Not yet a trait** — the
+policy is fused into the WAL. Extract it.
 
-- **GroupCommit** (built) — leader/follower batched fsync; helps when commits
-  overlap.
-- **EpochCommit** (planned) — Silo-style; persist one epoch at a time,
-  amortize fsync across thousands of txns off the critical path.
-- **AsyncCommit** (stretch) — acknowledge before durability with bounded loss
-  window; for benchmarking the durability/throughput trade.
+- **Group commit** (built, inside the WAL) — batched fsync across
+  overlapping commits.
+- **EpochCommit** (planned) — Silo-style. Persist one epoch at a time and
+  amortize fsync off the critical path.
+- **AsyncCommit** (stretch) — acknowledge before durability, with a
+  bounded loss window. For benchmarking the durability/throughput trade.
 
-## 7. Query optimizer — `Optimizer`
+## 7. Query planner — `PlannerStrategy`
 
-Logical → physical plan selection. The four-stage progression is the portfolio
-centerpiece. The seam exists today as the `Planner` enum (`RuleBased` +
-`Selinger`), runtime-swappable on the `Session`; there is also a
-`PlannerStrategy` trait, but dispatch is via the enum rather than `dyn` (the
-"Option B" decision — an open set can move to `dyn` later if needed).
+Logical → physical plan selection. The trait exists. Dispatch is via the
+`Planner` enum on the `Session` (runtime-swappable), not `dyn` — an open
+set can move to `dyn` later if needed.
 
-- **Heuristic / RuleBased** (built) — rule-based rewrites, no cost.
-- **SystemR / Selinger** (built) — dynamic-programming join ordering, cost-
-  driven; the second implementation that makes this a validated seam.
-- **Volcano** (planned) — top-down cost-based search.
-- **Cascades** (planned) — memo + rules; the differentiator.
+- **RuleBased** (built, default) — heuristic rewrites, no cost.
+- **Selinger** (built) — System-R dynamic-programming join ordering,
+  cost-driven on `ANALYZE` statistics.
+- **VolcanoMemo** (built) — top-down memo search.
+
+All three produce identical answers on the proven query corpus. Only plan
+shape and speed vary.
 
 ## 8. Cost model — `CostModel`
 
-Estimates plan cost for the optimizer. Now a trait (`trait CostModel`),
-consumed generically by the Selinger planner (`SelingerPlanner<DefaultCostModel>`).
-One impl so far — a hypothesis until a second rides the trait.
+Estimates plan cost for the cost-based planners. A trait, consumed
+generically (`SelingerPlanner<C>`, `VolcanoPlanner<C>`).
 
-- **DefaultCostModel** (built) — cardinality / IO cost formulas; the first impl.
+- **DefaultCostModel** (built) — cardinality and I/O cost formulas. The
+  production impl.
+- **CountingCostModel / HashHostileModel / MergeFriendlyModel** (built,
+  test) — instrumented and adversarial models that prove the seam and pin
+  planner behavior.
 - **Calibrated cost** (planned) — coefficients tied to measured per-engine
-  profiles (addresses the known storage/optimizer cost-coupling leak).
-- **Learned cost** (stretch) — trained on `workload_log`; the V3 adaptive
-  thesis.
+  profiles.
+- **Learned cost** (stretch) — trained on the workload log.
 
 ## 9. Statistics — `StatsProvider`
 
-Feeds the cost model. Now a trait (`trait StatsProvider`).
+Feeds the cost model.
 
-- **CatalogStatsProvider** (built) — reads per-table/column statistics from the
-  catalog; the production impl.
-- **MockStatsProvider** (built, test) — fixed guesses; the baseline / test double
-  that proves the seam (the old "NoStats").
+- **CatalogStatsProvider** (built) — reads per-table and per-column
+  statistics from the catalog. The production impl.
+- **MockStatsProvider** (built, test) — fixed guesses. The test double
+  that proves the seam.
 - **HistogramStats** (planned) — richer per-column histograms.
-- **SamplingStats** (stretch) — runtime sampling / sketches.
+- **SamplingStats** (stretch) — runtime sampling and sketches.
 
 ## 10. Execution model — `ExecutionModel`
 
-How operators produce rows. **Not yet a trait.**
+How operators produce rows. A trait, selected at run time via the
+`ExecModel` enum on the `Session`.
 
-- **Volcano / iterator** (built) — row-at-a-time pull (`next()`).
-- **Vectorized** (planned) — batch-at-a-time; the OLAP / ClickBench path.
-- **Compiled / push-based** (stretch) — codegen per query plan.
+- **Volcano** (built, default) — row-at-a-time pull (`next()`).
+- **Push** (built) — data-driven. Native push sinks, including grouped
+  HashAggregate.
+- **Vectorized** (planned) — batch-at-a-time. The OLAP path.
+- **Compiled** (stretch) — codegen per query plan.
 
-## 11. Whole query engine — `QueryEngine`
+## 11. Row layout — `DataLayout`
 
-Coarse seam: SQL string → result set. The substitutability claim at the
-largest grain. **Not yet a trait.**
+How tuples are encoded on a page. A trait in `idb-sql` (`layout/`), with
+one implementation — a hypothesis until a second rides it.
+
+- **RowLayout** (built) — row-major encoding. The production impl.
+- **ColumnLayout** (planned) — column-major. The seam's validation target.
+
+## 12. Whole query engine — `QueryEngine`
+
+The coarsest seam: SQL string → result set. **Not yet a trait.**
 
 - **NativeEngine** (built) — `parse → bind → plan → execute`.
-- **DataFusionEngine** (planned) — mounts IDB storage via `TableProvider`;
-  external industrial-strength oracle and columnar baseline (feature-gated).
+- **DataFusionEngine** (stretch) — mount IDB storage via `TableProvider`.
+  An external industrial-strength oracle and columnar baseline.
 
 ---
 
-## Build order (dependency-aware)
+## Next extractions (dependency-aware)
 
-1. Extract `ConcurrencyControl` from the hard-wired MVCC (unblocks SSI/OCC/2PL).
-2. ~~Extract `Optimizer` + `CostModel` + `StatsProvider` (the query triad)~~ —
-   **done** (Phase 14: `Planner` enum with RuleBased + Selinger, plus the
-   `CostModel` and `StatsProvider` traits). Remaining triad work: a second
-   `CostModel` impl, and the Volcano/Cascades optimizers.
-3. `InMemoryEngine` behind `StorageEngine` (first speed-ladder rung).
-4. `EpochCommit` behind `CommitProtocol`.
-5. `ExecutionModel` extraction, then `Vectorized`.
-6. `QueryEngine` extraction, then `DataFusionEngine`.
+1. `CommitProtocol` out of the WAL (unblocks `EpochCommit`).
+2. A second `DataLayout` impl (`ColumnLayout`) — validates the one
+   unproven seam.
+3. `SSI` behind `IsolationPolicy` (the matrix already has its slot).
+4. Full `ConcurrencyControl` extraction (unblocks OCC and partitioned
+   serial).
+5. `InMemoryEngine` behind `StorageEngine`.
+6. `QueryEngine` extraction, then DataFusion.
 
-Each extraction is only "done" when a second implementation rides the same
+An extraction is only "done" when a second implementation rides the same
 trait and a differential harness proves they agree.

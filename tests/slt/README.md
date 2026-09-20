@@ -5,6 +5,12 @@ SQL correctness tests as data. Each `.slt` file runs through
 engine + WAL `NoSync`); one `#[test]` per file. Adding or editing a SQL
 test here recompiles nothing.
 
+The corpus has two kinds of file. Per-feature files pin one SQL surface
+each (for example `group_by.slt`, `date.slt`, `outer_join.slt`,
+`correlated.slt`, `create_index.slt`). The `tpch_q*.slt` files pin
+TPC-H query shapes on hand-computed micro-datasets — exact answers a
+person can verify, complementing the oracle validation in `bin/tpch`.
+
 Format: sqllogictest (`statement ok` / `statement error <regex>` /
 `query <types>` + `----` + expected rows). Conventions from the harness:
 `NULL` for SQL NULL, `(empty)` for empty strings, decimals with an
@@ -30,8 +36,8 @@ SQLite's cross-verified corpus (probed 2026-07 via the gregrahn mirror):
 its very first statement — CREATE TABLE without PRIMARY KEY — misses our
 dialect, which poisons every later statement on that table. The probe
 originally also blamed column-list INSERT and the `INTEGER` alias, but
-both were already supported; `insert.slt` proves it with select1.test's
-own INSERTs verbatim (correction 2026-07). The real blockers are PK-less
-tables and the corpus's CASE/GROUP BY-heavy queries. Adopt when those
-land (the TPC-H-era dialect work), not before; partial adoption earlier
-would mostly measure the dialect gap.
+both were already supported. `insert.slt` proves it with select1.test's
+own INSERTs verbatim (correction 2026-07). The TPC-H dialect work landed
+CASE and GROUP BY, so the sole remaining blocker is PK-less tables (see
+the PK deviation in `docs/plan-tpch.md`). Adopt the corpus when that
+lands. Partial adoption earlier would mostly measure the dialect gap.

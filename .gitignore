@@ -1,3 +1,5 @@
+# macOS Finder metadata (no slash → matches any directory in the repo)
+.DS_Store
 target/
 Cargo.lock
 CLAUDE.md

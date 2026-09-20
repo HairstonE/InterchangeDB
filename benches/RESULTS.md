@@ -1,32 +1,41 @@
-# Benchmark Results
+# Benchmarks
 
-Single-threaded, real disk I/O. Run with `cargo bench`.
+The bench suite, what each target measures, and how to run it. Numbers are
+machine-relative — criterion writes its reports to `target/criterion/`,
+and the TPC harnesses print their own tables. Historical hand-recorded
+numbers live in this file's git history.
 
-## BPM Bench (`bpm_bench.rs`)
+Run everything with `cargo bench`, or one target with
+`cargo bench --bench <name>`.
 
-Measures buffer pool manager page access throughput under eviction pressure (640 pages, pool=64).
+## Criterion harnesses
 
-| Benchmark | Throughput | Latency |
-|-----------|-----------|---------|
-| Sequential scan | 160K pages/sec | 4.0 ms / 640 pages |
-| Random read-modify-write | 100 ops/sec | 1.0 s / 100 ops |
+| Target | Measures |
+|--------|----------|
+| `engine_bench` | Storage-engine microbenchmarks: B+Tree insert/lookup/mixed (`btree_bench.rs`) and LSM equivalents (`lsm_bench.rs`). |
+| `sql_bench` | The SQL layer: the config-matrix head-to-head (`config_matrix.rs` — same testkit workload across every registry config), push vs volcano execution (`push_vs_volcano.rs`), and transaction throughput (`txn_bench.rs`). |
+| `eviction_policies` | The six eviction policies across workload patterns. `cargo bench -- eviction` for throughput, `cargo bench -- summary` for hit rates. |
+| `bpm_bench` | Buffer-pool page-access throughput under eviction pressure. |
 
-## B-Tree Bench (`btree_bench.rs`)
+## Custom-main experiments (not criterion)
 
-Measures B+Tree operations with realistic page sizes (10K keys, leaf_max=202, internal_max=290, pool=1024).
+The seven `engine_*` targets are one-shot experiments with their own
+`main`: `engine_crossover`, `engine_steady_state`, `engine_range_scan`,
+`engine_amplification`, `engine_space_amplification`,
+`engine_zipfian_updates`, `engine_ycsb`. Each prints its own report.
+They compare the B-tree and LSM engines head-to-head on a specific
+workload shape (crossover points, steady state, range scans, write and
+space amplification, Zipfian updates, YCSB mixes).
 
-| Benchmark | Throughput | Latency |
-|-----------|-----------|---------|
-| Bulk insert (10K keys) | 6.8K inserts/sec | 1.48 s / 10K keys |
-| Random lookup | 21K lookups/sec | 4.7 ms / 100 lookups |
-| Mixed delete/insert/modify | 25K ops/sec | 4.0 ms / 100 ops |
+## Macro-benchmarks (bins, not `cargo bench`)
 
-## Eviction Policies (`eviction_policies.rs`)
-
-Compares six eviction policies (FIFO, Clock, LRU, LRU-K, 2Q, ARC) across five workload patterns. Run with `cargo bench -- eviction` for throughput or `cargo bench -- summary` for hit rates.
+- **TPC-C** — `cargo run --release --bin tpcc` (throughput, tpmC).
+- **TPC-H** — `cargo run --release --bin tpch -- --time` (query timings;
+  see [`docs/tpch-timings.md`](../docs/tpch-timings.md)).
 
 ## Notes
 
-- BusTub equivalents use in-memory disk, so their numbers are much higher.
-- Random BPM writes are bottlenecked by real disk I/O on eviction (fsync).
-- Concurrent versions will be added after latch crabbing is implemented.
+- File-backed benches pay a real fsync per write. 
+- The config-matrix bench consumes the same `testkit` registries as the
+  conformance tests — a new engine or policy gets a bench slot from the
+  same registry line (see [`testkit/README.md`](../testkit/README.md)).

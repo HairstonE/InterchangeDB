@@ -1,13 +1,14 @@
 # testkit — how to write tests with the conformance matrix
 
-`testkit` is the shared test/bench support crate (Q-33, `docs/stability.md`
-pillar G). It exists so the test suite **exploits the source's
-interchangeability**: the database is a set of swappable traits, so we write
-each contract **once** and run it across **every** implementation, and we assert
-that swapping an implementation changes performance, *never* correctness.
+`testkit` is the shared test and bench support crate (strategy context in
+[`docs/stability.md`](../docs/stability.md)). It exists so the test suite
+**exploits the source's interchangeability**: the database is a set of
+swappable traits, so we write each contract **once** and run it across
+**every** implementation. The asserted invariant: swapping an
+implementation changes performance, *never* correctness.
 
-It is a `dev-dependency` of the root crate — `tests/` and `benches/` see it; the
-library (`src/`) never does (no cycle, source stays clean).
+It is a `dev-dependency` of the root crate — `tests/` and `benches/` see
+it. The library (`src/`) never does (no cycle, the source stays clean).
 
 ---
 
@@ -15,35 +16,37 @@ library (`src/`) never does (no cycle, source stays clean).
 
 The matrix is built from **two primitives**:
 
-1. **A config registry** (the *where* — which implementations). One x-macro per
-   swappable axis in `matrix.rs`: `for_each_policy!`, `for_each_disk!`,
-   `for_each_engine!`. **These are the single source of truth for which configs
-   exist.**
-2. **Workloads as data** (the *what* — which operations). `workload::Op` streams,
-   either `seeded(...)` (deterministic) or `op_strategy(...)` (proptest). Pure
-   data, so the same workload is *asserted* by tests, *measured* by benches, and
-   (later) *replayed* under shuttle.
+1. **A config registry** (the *where* — which implementations). One
+   x-macro per swappable axis in `matrix.rs`: `for_each_policy!`,
+   `for_each_disk!`, `for_each_engine!`, `for_each_isolation!`. **These
+   are the single source of truth for which configs exist.**
+2. **Workloads as data** (the *what* — which operations). `workload::Op`
+   streams, either `seeded(...)` (deterministic) or `op_strategy(...)`
+   (proptest). Pure data, so the same workload is *asserted* by tests,
+   *measured* by benches, and (later) *replayed* under shuttle.
 
-Every test that touches a swappable axis is a generator (one of the above)
-crossed with the registry. **Do not write a test per config.** That is the
-anti-pattern this crate eliminates.
+Every test that touches a swappable axis is a generator (one of the
+above) crossed with the registry. **Do not write a test per config.**
+That is the anti-pattern this crate eliminates.
 
 ---
 
 ## The golden rules
 
-1. **Matrix-first.** If behavior varies by a swappable axis (`StorageEngine`,
-   `EvictionPolicy`, `DiskManager`), write the contract/property once and run it
-   across every config via the registry. A failure must name the config.
-2. **One place to add a config.** Add a configuration in exactly one spot — the
-   relevant `for_each_*!` in `matrix.rs` (+ its ctor in `policy`/`disk`/`engine`).
-   Every conformance suite, differential, and bench then covers it for free.
-3. **Workloads are data.** Express a workload as `Vec<Op>`; never inline an ad-hoc
-   op loop that a bench can't reuse.
-4. **Keep impl-specific behavior out of the matrix.** Eviction *order* (FIFO
-   oldest, LRU least-recent), LSM compaction, File persistence-across-reopen —
-   those are plain per-impl tests. The matrix tests only what *all* impls of a
-   trait must agree on.
+1. **Matrix-first.** If behavior varies by a swappable axis
+   (`StorageEngine`, `EvictionPolicy`, `DiskManager`, `IsolationPolicy`),
+   write the contract or property once and run it across every config via
+   the registry. A failure must name the config.
+2. **One place to add a config.** Add a configuration in exactly one spot
+   — the relevant `for_each_*!` in `matrix.rs`, plus its ctor in
+   `policy`/`disk`/`engine`/`isolation`. Every conformance suite,
+   differential, and bench then covers it for free.
+3. **Workloads are data.** Express a workload as `Vec<Op>`. Never inline
+   an ad-hoc op loop that a bench cannot reuse.
+4. **Keep impl-specific behavior out of the matrix.** Eviction *order*
+   (FIFO oldest, LRU least-recent), LSM compaction, File
+   persistence-across-reopen — those are plain per-impl tests. The matrix
+   tests only what *all* impls of a trait must agree on.
 
 ---
 
@@ -51,16 +54,16 @@ anti-pattern this crate eliminates.
 
 | Shape | Question it answers | Helper | Example |
 | --- | --- | --- | --- |
-| **Conformance** | does each config satisfy the trait's contract? | `<axis>::assert_contract` | `tests/replacer_conformance.rs` |
-| **Equivalence** | do all configs produce identical results? | `equivalence::assert_all_equal` | `tests/config_equivalence.rs` (seeded), `tests/config_proptest.rs` (proptest) |
-| **Head-to-head bench** | how do configs compare on the *same* workload? | criterion group | `benches/config_matrix.rs` |
+| **Conformance** | Does each config satisfy the trait's contract? | `<axis>::assert_contract` | `tests/replacer_conformance.rs` |
+| **Equivalence** | Do all configs produce identical results? | `equivalence::assert_all_equal` | `tests/config_equivalence.rs` (seeded), `tests/config_proptest.rs` (proptest) |
+| **Head-to-head bench** | How do configs compare on the *same* workload? | criterion group | `benches/sql_bench/config_matrix.rs` |
 
 ---
 
 ## Recipes (copy these)
 
 ### Add a new config to an existing axis
-One line in the registry + one ctor. Example — a 7th eviction policy:
+One line in the registry plus one ctor. Example — a 7th eviction policy:
 
 ```rust
 // testkit/src/policy.rs
@@ -70,8 +73,8 @@ pub fn my_policy() -> Box<dyn EvictionPolicy> { Box::new(MyReplacer::new(CAP)) }
 $cb!(my_policy, $crate::policy::my_policy);
 ```
 
-Done. `replacer_conformance`, `config_equivalence`, `config_proptest`, and the
-`config_matrix` bench now all cover `my_policy`.
+Done. `replacer_conformance`, `config_equivalence`, `config_proptest`,
+and the `config_matrix` bench now all cover `my_policy`.
 
 ### A conformance suite for an axis (one `#[test]` per config)
 
@@ -89,8 +92,9 @@ macro_rules! contract {
 testkit::for_each_disk!(contract);
 ```
 
-`EvictionPolicy` makers are bare `fn() -> Box<dyn EvictionPolicy>` (no `Built`);
-`DiskManager`/`StorageEngine` ctors return `Built<T>` — call `.get()` / `.get_mut()`.
+`EvictionPolicy` makers are bare `fn() -> Box<dyn EvictionPolicy>` (no
+`Built`). `DiskManager`/`StorageEngine` ctors return `Built<T>` — call
+`.get()` / `.get_mut()`.
 
 ### An equivalence differential — deterministic
 
@@ -124,9 +128,9 @@ proptest! {
 
 ### A `Database<E>` / txn-level test across engines (compile-time)
 
-`Database<E>` is **generic, not `dyn`** — so engine-level/txn/durability tests
-instantiate per engine at compile time rather than iterating a runtime `Vec`.
-Pattern (see `tests/dst_recovery_test.rs`):
+`Database<E>` is **generic, not `dyn`** — so engine-level, txn, and
+durability tests instantiate per engine at compile time rather than
+iterating a runtime `Vec`. Pattern (see `tests/dst_recovery_test.rs`):
 
 ```rust
 type DbMaker<E> = fn(&Path) -> Database<E>;
@@ -139,47 +143,52 @@ fn run_sweep<E: StorageEngine>(label: &str, make_db: DbMaker<E>, /* … */) { /*
 ```
 
 ### A head-to-head bench
-Consume the **same** registry + workload (see `benches/config_matrix.rs`): a
-criterion `benchmark_group`, one `bench_function` per config from
-`testkit::policy::makers()` (runtime) or `for_each_engine!` (macro).
+Consume the **same** registry and workload (see
+`benches/sql_bench/config_matrix.rs`): a criterion `benchmark_group`, one
+`bench_function` per config from `testkit::policy::makers()` (runtime) or
+`for_each_engine!` (macro).
 
 ### A brand-new swappable axis (new trait)
 1. `for_each_<axis>!` in `matrix.rs` (the registry).
-2. `testkit/src/<axis>.rs` — the ctors + `assert_contract`.
+2. `testkit/src/<axis>.rs` — the ctors plus `assert_contract`.
 3. `tests/<axis>_conformance.rs` — the per-config `#[test]`s.
 4. If the axis is correctness-neutral, an equivalence differential.
 
-### Rip a new engine into the matrix (the payoff)
-Add one line to `for_each_engine!` + its ctor in `engine.rs`, and add a
-`Database` maker for the durability sweep. It then inherits: the engine contract,
-the equivalence differentials (seeded + proptest), the crash-recovery sweep, and
-a bench slot — for free.
+### Add a new engine to the matrix (the payoff)
+Add one line to `for_each_engine!`, its ctor in `engine.rs`, and a
+`Database` maker for the durability sweep. The engine then inherits: the
+engine contract, the equivalence differentials (seeded and proptest), the
+crash-recovery sweep, and a bench slot — for free.
 
 ---
 
 ## Mechanics & gotchas
 
-- **Object-safety dictates the mechanism.** `EvictionPolicy`, `DiskManager`, and
-  `StorageEngine` are deliberately dyn-compatible (`scan<R>` is fenced
-  `where Self: Sized`), so their registries are uniform runtime `Vec`s of makers.
-  `Database<E>` is generic and *not* dyn — its tests use compile-time
-  per-engine instantiation (a small macro or explicit `fn`s).
-- **Eviction needs pressure to be meaningful.** A small pool (but **≥ 4** — a
-  B-tree split simultaneously pins parent + children) plus enough keys to exceed
-  the pool (~200 keys/leaf at default node sizes, so ~1000 keys over pool 4).
-  Use `MemoryDiskManager` for speed. Without eviction, a policy differential is
-  vacuous (the policy is never invoked).
-- **`FileDiskManager` fsyncs every write.** Keep file-backed workloads **small**
-  (a few hundred ops) or the test takes minutes. The file backend's correctness
-  is covered fast by `disk_manager_conformance`; differentials don't need a huge
-  file workload.
+- **Object-safety dictates the mechanism.** `EvictionPolicy`,
+  `DiskManager`, and `StorageEngine` are deliberately dyn-compatible
+  (`scan<R>` is fenced `where Self: Sized`), so their registries are
+  uniform runtime `Vec`s of makers. `Database<E>` is generic and *not*
+  dyn — its tests use compile-time per-engine instantiation (a small
+  macro or explicit `fn`s).
+- **Eviction needs pressure to be meaningful.** Use a small pool (but
+  **at least 4** — a B-tree split simultaneously pins parent and
+  children) plus enough keys to exceed the pool (~200 keys/leaf at
+  default node sizes, so ~1000 keys over pool 4). Use
+  `MemoryDiskManager` for speed. Without eviction, a policy differential
+  is vacuous — the policy is never invoked.
+- **`FileDiskManager` fsyncs every write.** Keep file-backed workloads
+  **small** (a few hundred ops) or the test takes minutes. The file
+  backend's correctness is covered fast by `disk_manager_conformance`.
+  Differentials do not need a huge file workload.
 - **Maker `Vec`s need a type alias** (`PolicyMaker`, …) or clippy's
   `type_complexity` fires under `-D warnings`.
 - **The x-macro callback pattern:** `for_each_*!($cb)` expands to
-  `$cb!(name, ctor); …` once per config. Write a callback macro that emits a
-  `#[test]`, a `v.push(...)`, or a `bench_function` — one registry, every view.
+  `$cb!(name, ctor); …` once per config. Write a callback macro that
+  emits a `#[test]`, a `v.push(...)`, or a `bench_function` — one
+  registry, every view.
 - **Gates:** every test must pass `cargo fmt --all --check` and
-  `cargo clippy --all-targets -- -D warnings`. Run both before declaring done.
+  `cargo clippy --all-targets -- -D warnings`. Run both before you
+  declare the work done.
 
 ---
 
@@ -189,6 +198,7 @@ a bench slot — for free.
 | --- | --- |
 | `matrix` | the `for_each_*!` registries (single source of truth) |
 | `policy` / `disk` / `engine` | per-axis ctors + `assert_contract` + (policy) `makers()` |
+| `isolation` | the Hermitage anomaly scenarios, run per `IsolationPolicy` level |
 | `workload` | `Op`, `seeded`, `op_strategy`, `apply`, `snapshot` |
 | `equivalence` | `assert_all_equal` |
 | `handles` | `Built<T>` (keeps a `TempDir` alive alongside the subject) |
@@ -196,7 +206,15 @@ a bench slot — for free.
 
 ## Future generators
 
-The matrix is a *seam*; more modalities plug into it as op-stream generators.
-proptest landed (`config_proptest`). **shuttle × workload** (concurrency) and
-**fuzz × matrix** (coverage-guided) are scoped with concrete entailment in
-`docs/stability.md` → pillar G → "Future generators on this seam".
+The matrix is a *seam* — more test modalities plug into it as op-stream
+generators. proptest landed (`config_proptest`). Two are scoped but not
+built:
+
+- **shuttle × workload** — replay a workload across threads under
+  shuttle's scheduler, per config. Prerequisite: convert the
+  transaction/lock cone to the `sync` shim so shuttle instruments it
+  (today only the buffer pool is).
+- **fuzz × matrix** — a coverage-guided differential fuzzer: bytes →
+  `Vec<Op>` → run across `for_each_engine!` → `assert_all_equal`. Worth
+  building only if libFuzzer finds op-stream paths that proptest's
+  sampling misses.

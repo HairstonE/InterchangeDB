@@ -1,8 +1,9 @@
-# Fuzz targets (Q-29, stability.md pillar B1)
+# Fuzz targets
 
 Coverage-guided [`cargo-fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html)
-/ libFuzzer targets over the decode-arbitrary-bytes surfaces. This is the
-**deep, manual** half of B1; the **stable-Rust, CI-resident** half lives in
+/ libFuzzer targets over the decode-arbitrary-bytes surfaces (strategy
+context in `docs/stability.md`, adversarial bug-finding). This is the
+**deep, manual** half. The **stable-Rust, CI-resident** half lives in
 `tests/decode_fuzz_test.rs` (proptest) and runs on every push.
 
 These targets are **deliberately off CI**: libFuzzer needs a nightly
@@ -47,8 +48,8 @@ cargo +nightly fuzz run <target> fuzz/artifacts/<target>/crash-<hash>
 | `keyenc_decode` | `types::keyenc::decode_key_components` | no panic on arbitrary (schema, bytes) |
 | `tuple_decode` | `types::tuple::decode` + `decode_column` | no panic on arbitrary (schema, bytes, index) |
 | `wal_record_decode` | `wal::LogRecord::decode` | no panic on arbitrary bytes |
-| `sstable_open` | `index::lsm::sstable::SSTableReader::open` | no panic on an arbitrary file |
-| `manifest_open` | `index::lsm::manifest::Manifest::open` | no panic on an arbitrary manifest (drives `replay_line`) |
+| `sstable_open` | `engines::lsm::sstable::SSTableReader::open` | no panic on an arbitrary file |
+| `manifest_open` | `engines::lsm::manifest::Manifest::open` | no panic on an arbitrary manifest (drives `replay_line`) |
 
 The two bugs these surfaces' proptest counterparts found (a `tuple::decode_column`
 cursor overrun and an `SSTableReader::open` too-small-file `assert!`) are fixed;

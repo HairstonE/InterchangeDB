@@ -8,16 +8,10 @@ the conformance-matrix mechanics live in
 
 The thesis: stability for an ACID engine decomposes into three concerns.
 
-1. **Automated regression catching** — a regression is caught without a
-   person remembering to look.
-2. **Adversarial bug-finding** — the suite finds bugs that no example test
-   was written for.
-3. **Provable ACID claims** — the isolation and durability guarantees are
-   *demonstrated* under adversarial conditions, not asserted.
-
-Each concern below states its mechanism, where it lives, and what it has
-found.
-
+1. **Automated regression catching**
+2. **Adversarial bug-finding**
+3. **Provable ACID claims** (the isolation and durability guarantees are
+   *demonstrated* under adversarial conditions).
 ---
 
 ## 1. Regression catching
